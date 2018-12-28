@@ -8,5 +8,7 @@ lazy val root = (project in file(".")).
       version      := "0.1.0-SNAPSHOT"
     )),
     name := "taglesstalk",
-    libraryDependencies += scalaTest % Test
-  )
+    libraryDependencies += scalaTest % Test,
+    libraryDependencies +=  "org.scalaz" %% "scalaz-core" % "7.2.27",
+    libraryDependencies +=  "org.scalaz" %% "scalaz-concurrent" % "7.2.27"
+)
