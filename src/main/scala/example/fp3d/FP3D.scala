@@ -1,9 +1,10 @@
 package example.fp3d
 
-import scalaz.{EitherT, Monad, MonadError, \/, ~>}
+import scalaz.{EitherT, Monad, MonadError, MonadListen, MonadPlus, MonadReader, MonadState, MonadTell, Nondeterminism, ReaderT, \/, ~>}
 import scalaz.concurrent.Task
+import scalaz.Scalaz._
 
-class FP3D {
+object FP3D {
 
   trait FunctorK[H[_[_]]] {
     def mapK[F[_], G[_]](hf : H[F])(f : F ~> G) : H[G]
@@ -35,6 +36,8 @@ class FP3D {
     def foo(a : Int, b : Int) : F[Int]
 
     def bar(a : String, b : String) : F[String]
+
+    def mapK[G[_]](f : F ~> G) : BarAlgebra[G] = FunctorK[BarAlgebra].mapK(this)(f)
   }
 
   object BarAlgebra {
@@ -47,17 +50,73 @@ class FP3D {
     }
   }
 
+  class MTL[M](val M: M) extends AnyVal
+
+  object MTL {
+    type MonadMTL[F[_]] <: Monad[F]
+
+    implicit def mtl[M](implicit M: M): MTL[M] = new MTL(M)
+
+    private def MonadMTL[M[f[_]] <: Monad[f], F[_]](M: M[F]): MonadMTL[F] =
+      M.asInstanceOf[MonadMTL[F]]
+
+    /** An artificial hierarchy for MTL type classes. */
+    object Hierarchy extends Hierarchy
+
+    trait Hierarchy extends Hierarchy0
+
+    sealed private[FP3D] trait Hierarchy0 extends Hierarchy1 {
+      implicit def mtlPlus[F[_]](implicit mtl: MTL[MonadPlus[F]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy1 extends Hierarchy2 {
+      implicit def mtlError[F[_], E](implicit mtl: MTL[MonadError[F, E]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy2 extends Hierarchy3 {
+      implicit def mtlState[F[_], S](implicit mtl: MTL[MonadState[F, S]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy3 extends Hierarchy4 {
+      implicit def mtlReader[F[_], R](implicit mtl: MTL[MonadReader[F, R]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy4 extends Hierarchy5 {
+      implicit def mtlListen[F[_], W](implicit mtl: MTL[MonadListen[F, W]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy5 extends Hierarchy6 {
+      implicit def mtlTell[F[_], W](implicit mtl: MTL[MonadTell[F, W]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy6 extends Hierarchy7 {
+      implicit def mtlNonDeterminism[F[_]](implicit mtl: MTL[Nondeterminism[F]]): MonadMTL[F] = MonadMTL(mtl.M)
+    }
+
+    sealed private[FP3D] trait Hierarchy7 {
+      implicit def monadError[F[_], E](implicit mtl: MTL[MonadError[F, E]]): MonadError[F, E] = mtl.M
+      implicit def monadState[F[_], S](implicit mtl: MTL[MonadState[F, S]]): MonadState[F, S] = mtl.M
+      implicit def monadReader[F[_], R](implicit mtl: MTL[MonadReader[F, R]]): MonadReader[F, R] = mtl.M
+      implicit def monadListen[F[_], W](implicit mtl: MTL[MonadListen[F, W]]): MonadListen[F, W] = mtl.M
+      implicit def monadTell[F[_], W](implicit mtl: MTL[MonadTell[F, W]]): MonadTell[F, W] = mtl.M
+      implicit def nonDeterminism[F[_]](implicit mtl: MTL[Nondeterminism[F]]): Nondeterminism[F] = mtl.M
+    }
+  }
+
   trait Program[F[_]] {
     def run(a : Int) : F[Int]
   }
 
-  class ProgramHK[F[_]](fooAlgebra : FooAlgebra[F], barAlgebra : BarAlgebra[F])(implicit F : Monad[F]) extends Program[F] {
+  class ProgramHK[F[_]](fooAlgebra : FooAlgebra[F], barAlgebra : BarAlgebra[F])(implicit F : MTL[MonadReader[F, Int]], E : MTL[MonadError[F, Throwable]]) extends Program[F] {
+    import example.fp3d.FP3D.MTL.Hierarchy._
+
     def run(a : Int) : F[Int] =
       for {
-        b <- barAlgebra.foo(a, a)
+        a1 <- F.M.ask
+        b <- barAlgebra.foo(a, a1)
         c <- fooAlgebra.foo(b)
         d <- barAlgebra.bar(c, c)
-        e <- fooAlgebra(d)
+        e <- fooAlgebra.bar(d)
       } yield e
   }
 
@@ -68,27 +127,36 @@ class FP3D {
   }
 
   type ErrorContext[A] = EitherT[Task, Throwable, A]
+  type ReaderContext[A] = ReaderT[ErrorContext, Int, A]
 
   class SafeBarService extends BarAlgebra[ErrorContext] {
     def foo(a : Int, b : Int) : ErrorContext[Int] =
       \/.fromTryCatchNonFatal(a / b * 2).fold(
-        MonadError[ErrorContext, Throwable].raiseError,
-        Monad[ErrorContext].point
+        MonadError[ErrorContext, Throwable].raiseError[Int],
+        i => MonadError[ErrorContext, Throwable].point[Int](i)
       )
 
     //EitherT.fromTryCatchNonFatal[Task, Int](Task.point((a / (b / 2)).toInt))
 
     def bar(a : String, b : String) : ErrorContext[String] =
       if (a.startsWith(b))
-        MonadError[ErrorContext, Throwable].raiseError(new Exception("Nope"))
+        MonadError[ErrorContext, Throwable].raiseError[String](new Exception("Nope"))
       else
-        Monad[ErrorContext].point(b)
+        MonadError[ErrorContext, Throwable].point(b)
   }
 
-  val barService : BarAlgebra[ErrorContext] = new SafeBarService
-  val fooService : FooAlgebra[ErrorContext] = (new FooService).mapK(new (Task ~> ErrorContext) {
-    def apply[A](fa : Task[A]) : ErrorContext[A] = EitherT(fa.attempt)
-  })
+  val reading = new (ErrorContext ~> ReaderContext) {
+    def apply[A](fa : ErrorContext[A]) : ReaderContext[A] = ReaderT(_ => fa)
+  }
 
-  val program = new ProgramHK[ErrorContext](fooService, barService)
+  val attempting = new (Task ~> ErrorContext) {
+    def apply[A](fa : Task[A]) : ErrorContext[A] = EitherT(fa.attempt)
+  }
+
+  val barService : BarAlgebra[ReaderContext] = (new SafeBarService).mapK(reading)
+  val fooService : FooAlgebra[ReaderContext] = (new FooService).mapK(attempting andThen reading)
+
+  import MTL._
+
+  val program = new ProgramHK[ReaderContext](fooService, barService)
 }
