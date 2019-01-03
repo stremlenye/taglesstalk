@@ -18,4 +18,17 @@ object FP2D {
 
   baz(1234) // Task(4)
   zab("barfoo") // Task("6")
+
+  val baz2 : F[Task, Int, Int] = (a : Int) => for {
+    b <- foo(a)
+    c <- bar(b)
+  } yield c
+
+  val zab2 : F[Task, String, String] = (a : String) => for {
+    b <- bar(a)
+    c <- foo(b)
+  } yield c
+
+  baz2(1234) // Task(4)
+  zab2("barfoo") // Task("6")
 }
