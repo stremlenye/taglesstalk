@@ -1,6 +1,6 @@
 package example.fp3d
 
-import scalaz.{EitherT, Monad, MonadError, MonadListen, MonadPlus, MonadReader, MonadState, MonadTell, Nondeterminism, ReaderT, \/, ~>}
+import scalaz.{Applicative, EitherT, Monad, MonadError, MonadListen, MonadPlus, MonadReader, MonadState, MonadTell, Nondeterminism, ReaderT, \/, ~>}
 import scalaz.concurrent.Task
 import scalaz.Scalaz._
 
@@ -120,29 +120,29 @@ object FP3D {
       } yield e
   }
 
-  class FooService extends FooAlgebra[Task] {
-    def foo(a : Int) : Task[String] = Task.point(a.toString)
+  class FooService[F[_]](implicit F : Applicative[F]) extends FooAlgebra[F] {
+    def foo(a : Int) : F[String] = F.point(a.toString)
 
-    def bar(a : String) : Task[Int] = Task.point(a.length)
+    def bar(a : String) : F[Int] = F.point(a.length)
   }
 
   type ErrorContext[A] = EitherT[Task, Throwable, A]
   type ReaderContext[A] = ReaderT[ErrorContext, Int, A]
 
-  class SafeBarService extends BarAlgebra[ErrorContext] {
-    def foo(a : Int, b : Int) : ErrorContext[Int] =
+  class BarService[F[_]](implicit F : MonadError[F, Throwable]) extends BarAlgebra[F] {
+    def foo(a : Int, b : Int) : F[Int] =
       \/.fromTryCatchNonFatal(a / b * 2).fold(
-        MonadError[ErrorContext, Throwable].raiseError[Int],
-        i => MonadError[ErrorContext, Throwable].point[Int](i)
+        F.raiseError[Int],
+        i => F.point[Int](i)
       )
 
     //EitherT.fromTryCatchNonFatal[Task, Int](Task.point((a / (b / 2)).toInt))
 
-    def bar(a : String, b : String) : ErrorContext[String] =
+    def bar(a : String, b : String) : F[String] =
       if (a.startsWith(b))
-        MonadError[ErrorContext, Throwable].raiseError[String](new Exception("Nope"))
+        F.raiseError(new Exception("Nope"))
       else
-        MonadError[ErrorContext, Throwable].point(b)
+        F.point(b)
   }
 
   val reading = new (ErrorContext ~> ReaderContext) {
@@ -153,8 +153,8 @@ object FP3D {
     def apply[A](fa : Task[A]) : ErrorContext[A] = EitherT(fa.attempt)
   }
 
-  val barService : BarAlgebra[ReaderContext] = (new SafeBarService).mapK(reading)
-  val fooService : FooAlgebra[ReaderContext] = (new FooService).mapK(attempting andThen reading)
+  val barService : BarAlgebra[ReaderContext] = new BarService[ReaderContext]
+  val fooService : FooAlgebra[ReaderContext] = new FooService[ReaderContext]
 
   import MTL._
 
