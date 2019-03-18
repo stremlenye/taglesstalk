@@ -6,6 +6,8 @@ import scalaz.Scalaz._
 
 object FP3D {
 
+  // (* -> *) -> *
+  // type H[C[A]]
   trait FunctorK[H[_[_]]] {
     def mapK[F[_], G[_]](hf : H[F])(f : F ~> G) : H[G]
   }
@@ -15,9 +17,9 @@ object FP3D {
   }
 
   trait FooAlgebra[F[_]] {
-    def foo(a : Int) : F[String]
+    def foo(a : Int) : F[String] // Int -> F[String]
 
-    def bar(a : String) : F[Int]
+    def bar(a : String) : F[Int] // String -> F[Int]
 
     def mapK[G[_]](f : F ~> G) : FooAlgebra[G] = FunctorK[FooAlgebra].mapK(this)(f)
   }
@@ -107,7 +109,8 @@ object FP3D {
     def run(a : Int) : F[Int]
   }
 
-  class ProgramHK[F[_]](fooAlgebra : FooAlgebra[F], barAlgebra : BarAlgebra[F])(implicit F : MTL[MonadReader[F, Int]], E : MTL[MonadError[F, Throwable]]) extends Program[F] {
+  class ProgramHK[F[_]]
+  (fooAlgebra : FooAlgebra[F], barAlgebra : BarAlgebra[F])(implicit F : MTL[MonadReader[F, Int]], E : MTL[MonadError[F, Throwable]]) extends Program[F] {
     import example.fp3d.FP3D.MTL.Hierarchy._
 
     def run(a : Int) : F[Int] =
